@@ -6,12 +6,11 @@ Isomorphic [BIP-158](https://github.com/bitcoin/bips/blob/master/bip-0158.mediaw
 
 This implementation is currently unpublished and marked private. The registry name `bip158` belongs to another project, so `bun add bip158` and `npm install bip158` do not install this code.
 
-Clone or otherwise check out this repository, then install and build it:
+Clone or otherwise check out this repository, then install it:
 
 ```bash
 cd /path/to/bip158
 bun install
-bun run build
 ```
 
 Use the checkout from another local project by passing its path:
@@ -65,8 +64,8 @@ Official BIP-158 testnet vectors live in `testdata/bip158/testnet-19.json` (10 b
 
 | Runtime | Entry |
 |---|---|
-| Bun / Node (ESM) | `dist/index.js` (`@noble/hashes` left external) |
-| React Native / Metro | `dist/react-native.js` (dependencies inlined; no Node built-ins) |
+| Bun | `src/index.ts` |
+| React Native / Metro | `src/react-native.ts` |
 | Browser bundlers | Either entry; browser smoke tests the package API |
 
 Core sources under `src/` use only `Uint8Array` and `@noble/hashes` — no `Buffer`, `node:*`, or Bun APIs.
@@ -74,7 +73,6 @@ Core sources under `src/` use only `Uint8Array` and `@noble/hashes` — no `Buff
 ## Development
 
 ```bash
-bun run build   # ESM + declarations + bundled React Native entry in dist/
 bun run check   # typecheck + unit tests + package smoke tests
 ```
 
