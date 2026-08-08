@@ -19,16 +19,37 @@ import { build } from "tsup";
 
 const fixtureDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(fixtureDir, "..", "..");
-const intendedFiles = [
-  "README.md",
-  "dist/index.d.ts",
-  "dist/index.js",
-  "dist/index.js.map",
-  "dist/react-native.d.ts",
-  "dist/react-native.js",
-  "dist/react-native.js.map",
-  "package.json",
-].sort();
+
+async function listFiles(directory, prefix = "") {
+  const entries = await readdir(directory, { withFileTypes: true });
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  const files = [];
+  for (const entry of entries) {
+    const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      files.push(...(await listFiles(join(directory, entry.name), relativePath)));
+    } else {
+      files.push(relativePath);
+    }
+  }
+  return files;
+}
+
+async function intendedPackFiles() {
+  const srcFiles = (await listFiles(join(packageRoot, "src"))).map(
+    (path) => `src/${path}`,
+  );
+  return [
+    "README.md",
+    "dist/index.js",
+    "dist/index.js.map",
+    "dist/react-native.js",
+    "dist/react-native.js.map",
+    "package.json",
+    ...srcFiles,
+  ].sort();
+}
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -50,24 +71,9 @@ function run(command, args, options = {}) {
   return result.stdout.trim();
 }
 
-async function listFiles(directory, prefix = "") {
-  const entries = await readdir(directory, { withFileTypes: true });
-  entries.sort((a, b) => a.name.localeCompare(b.name));
-
-  const files = [];
-  for (const entry of entries) {
-    const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) {
-      files.push(...(await listFiles(join(directory, entry.name), relativePath)));
-    } else {
-      files.push(relativePath);
-    }
-  }
-  return files;
-}
-
 const tempRoot = await mkdtemp(join(tmpdir(), "bip158-package-smoke-"));
 try {
+  const intendedFiles = await intendedPackFiles();
   const packDir = join(tempRoot, "pack");
   await mkdir(packDir);
 
@@ -181,14 +187,15 @@ try {
       "--target",
       "ES2022",
       "--module",
-      "NodeNext",
+      "ESNext",
       "--moduleResolution",
-      "NodeNext",
+      "bundler",
+      "--allowImportingTsExtensions",
       typesSmoke,
     ],
     { cwd: consumerDir },
   );
-  console.log("TypeScript: installed declarations typechecked");
+  console.log("TypeScript: installed source types typechecked");
 
   const browserSmoke = join(consumerDir, "browser-smoke.mjs");
   await copyFile(join(fixtureDir, "browser-smoke.mjs"), browserSmoke);
