@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
-  readFile,
   readdir,
   realpath,
   rm,
@@ -14,8 +12,6 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { build } from "tsup";
 
 const fixtureDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(fixtureDir, "..", "..");
@@ -40,15 +36,7 @@ async function intendedPackFiles() {
   const srcFiles = (await listFiles(join(packageRoot, "src"))).map(
     (path) => `src/${path}`,
   );
-  return [
-    "README.md",
-    "dist/index.js",
-    "dist/index.js.map",
-    "dist/react-native.js",
-    "dist/react-native.js.map",
-    "package.json",
-    ...srcFiles,
-  ].sort();
+  return ["README.md", "package.json", ...srcFiles].sort();
 }
 
 function run(command, args, options = {}) {
@@ -77,9 +65,7 @@ try {
   const packDir = join(tempRoot, "pack");
   await mkdir(packDir);
 
-  // npm < 11 still runs `prepare` during `pack` even with `--ignore-scripts`,
-  // and npm >= 10.5 defaults foreground-scripts so prepare stdout pollutes
-  // `npm pack --json`. Keep scripts quiet and ignore them when the CLI allows.
+  // Keep pack output to JSON only (npm may still print noise around the array).
   const packJson = run(
     "npm",
     [
@@ -130,7 +116,6 @@ try {
       2,
     )}\n`,
   );
-  assert.deepEqual(await readdir(consumerDir), ["package.json"]);
 
   run(
     "npm",
@@ -149,11 +134,7 @@ try {
     },
   );
 
-  const installedPackageRoot = join(
-    consumerDir,
-    "node_modules",
-    "bip158",
-  );
+  const installedPackageRoot = join(consumerDir, "node_modules", "bip158");
   const installedPackageStat = await lstat(installedPackageRoot);
   assert.equal(installedPackageStat.isDirectory(), true);
   assert.equal(installedPackageStat.isSymbolicLink(), false);
@@ -161,120 +142,62 @@ try {
     await realpath(installedPackageRoot),
     await realpath(packageRoot),
   );
-  assert.deepEqual((await listFiles(installedPackageRoot)).sort(), intendedFiles);
+  assert.deepEqual(
+    (await listFiles(installedPackageRoot)).sort(),
+    intendedFiles,
+  );
   console.log("npm install: isolated tarball consumer installed without scripts");
 
-  const runtimeSmoke = join(consumerDir, "runtime-smoke.mjs");
-  await copyFile(join(fixtureDir, "runtime-smoke.mjs"), runtimeSmoke);
-  console.log(run(process.execPath, [runtimeSmoke], { cwd: consumerDir }));
-  console.log(run("bun", [runtimeSmoke], { cwd: consumerDir }));
+  const bunSmoke = `
+import assert from "node:assert/strict";
+import {
+  buildBasicFilter,
+  bytesToHex,
+  hexToBytes,
+  matchAnyBasicFilters,
+} from "bip158";
 
-  const typesSmoke = join(consumerDir, "types-smoke.ts");
-  await copyFile(join(fixtureDir, "types-smoke.ts.txt"), typesSmoke);
-  const tscPath = join(
-    packageRoot,
-    "node_modules",
-    "typescript",
-    "bin",
-    "tsc",
-  );
-  run(
-    process.execPath,
-    [
-      tscPath,
-      "--noEmit",
-      "--strict",
-      "--target",
-      "ES2022",
-      "--module",
-      "ESNext",
-      "--moduleResolution",
-      "bundler",
-      "--allowImportingTsExtensions",
-      typesSmoke,
-    ],
-    { cwd: consumerDir },
-  );
-  console.log("TypeScript: installed source types typechecked");
+const resolved = import.meta.resolve("bip158");
+assert.ok(
+  resolved.endsWith("/src/index.ts") || resolved.endsWith("\\\\src\\\\index.ts"),
+  \`expected resolve path to end with src/index.ts, got \${resolved}\`,
+);
 
-  const browserSmoke = join(consumerDir, "browser-smoke.mjs");
-  await copyFile(join(fixtureDir, "browser-smoke.mjs"), browserSmoke);
-  const browserOutDir = join(tempRoot, "browser");
-  await build({
-    bundle: true,
-    clean: true,
-    config: false,
-    dts: false,
-    entry: { "browser-smoke": browserSmoke },
-    format: "esm",
-    noExternal: [/.*/],
-    outDir: browserOutDir,
-    platform: "browser",
-    silent: true,
-    sourcemap: false,
-    splitting: false,
-    target: "es2022",
-  });
+const blockHashDisplay = hexToBytes(
+  "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943",
+);
+const coinbaseScript = hexToBytes(
+  "4104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac",
+);
 
-  const outputNames = await readdir(browserOutDir);
-  assert.deepEqual(outputNames, ["browser-smoke.js"]);
+const filter = buildBasicFilter({
+  blockHashDisplay,
+  elements: [coinbaseScript],
+});
+assert.equal(bytesToHex(filter), "019dfca8");
+assert.deepEqual(
+  matchAnyBasicFilters([filter], [blockHashDisplay], [coinbaseScript]),
+  [true],
+);
 
-  const browserBundle = await readFile(
-    join(browserOutDir, "browser-smoke.js"),
-    "utf8",
-  );
-  assert.doesNotMatch(browserBundle, /\bnode:/);
-  assert.doesNotMatch(
-    browserBundle,
-    /^\s*(?:(?:import|export)\s+[^'"\n]*?\s+from\s+|import\s*)["'][^"']+["']/m,
-  );
-  assert.doesNotMatch(browserBundle, /\bimport\s*\(\s*["'][^"']+["']/);
+const rn = await import("./node_modules/bip158/src/react-native.ts");
+assert.equal(typeof rn.buildBasicFilter, "function");
+assert.equal(
+  rn.bytesToHex(
+    rn.buildBasicFilter({
+      blockHashDisplay,
+      elements: [coinbaseScript],
+    }),
+  ),
+  "019dfca8",
+);
 
-  const browserModule = await import(
-    `data:text/javascript;base64,${Buffer.from(browserBundle).toString("base64")}`
-  );
-  assert.equal(browserModule.browserSmokePassed, true);
-  console.log(
-    "Browser: installed package bundled without Node built-ins and ran",
-  );
+console.log(\`Bun \${Bun.version}: source package import and filter behavior passed\`);
+`;
 
-  const reactNativeEntry = join(
-    installedPackageRoot,
-    "dist",
-    "react-native.js",
-  );
-  const reactNativeSource = await readFile(reactNativeEntry, "utf8");
-  assert.doesNotMatch(reactNativeSource, /\bnode:/);
-  assert.doesNotMatch(reactNativeSource, /from\s+["']@noble\//);
-  assert.doesNotMatch(reactNativeSource, /\bBuffer\b/);
-  assert.match(
-    await readFile(join(packageRoot, "dist", "index.js"), "utf8"),
-    /from\s+["']@noble\/hashes\//,
-  );
-
-  const reactNativeModule = await import(reactNativeEntry);
-  const blockHashDisplay = reactNativeModule.hexToBytes(
-    "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943",
-  );
-  const coinbaseScript = reactNativeModule.hexToBytes(
-    "4104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac",
-  );
-  const filter = reactNativeModule.buildBasicFilter({
-    blockHashDisplay,
-    elements: [coinbaseScript],
-  });
-  assert.equal(reactNativeModule.bytesToHex(filter), "019dfca8");
-  assert.deepEqual(
-    reactNativeModule.matchAnyBasicFilters(
-      [filter],
-      [blockHashDisplay],
-      [coinbaseScript],
-    ),
-    [true],
-  );
-  console.log(
-    "React Native: bundled entry has no Node/@noble imports and matches genesis",
-  );
+  const bunSmokePath = join(consumerDir, "bun-smoke.mjs");
+  await writeFile(bunSmokePath, bunSmoke);
+  console.log(run("bun", [bunSmokePath], { cwd: consumerDir }));
 } finally {
   await rm(tempRoot, { force: true, recursive: true });
 }

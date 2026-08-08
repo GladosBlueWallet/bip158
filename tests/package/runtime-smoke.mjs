@@ -7,9 +7,9 @@ import {
   matchAnyBasicFilters,
 } from "bip158";
 
-assert.match(
-  import.meta.resolve("bip158"),
-  /\/node_modules\/bip158\/dist\/index\.js$/,
+assert.ok(
+  import.meta.resolve("bip158").endsWith("/src/index.ts"),
+  "expected bip158 to resolve to src/index.ts",
 );
 
 const blockHashDisplay = hexToBytes(
