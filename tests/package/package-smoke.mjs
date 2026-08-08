@@ -71,18 +71,36 @@ try {
   const packDir = join(tempRoot, "pack");
   await mkdir(packDir);
 
+  // npm < 11 still runs `prepare` during `pack` even with `--ignore-scripts`,
+  // and npm >= 10.5 defaults foreground-scripts so prepare stdout pollutes
+  // `npm pack --json`. Keep scripts quiet and ignore them when the CLI allows.
   const packJson = run(
     "npm",
     [
       "pack",
       "--json",
       "--ignore-scripts",
+      "--foreground-scripts=false",
       "--pack-destination",
       packDir,
     ],
-    { cwd: packageRoot },
+    {
+      cwd: packageRoot,
+      env: {
+        npm_config_ignore_scripts: "true",
+        npm_config_foreground_scripts: "false",
+        FORCE_COLOR: "0",
+        NO_COLOR: "1",
+      },
+    },
   );
-  const [packResult] = JSON.parse(packJson);
+  const jsonStart = packJson.indexOf("[");
+  const jsonEnd = packJson.lastIndexOf("]");
+  assert.ok(
+    jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart,
+    `npm pack --json did not return a JSON array; stdout was: ${packJson.slice(0, 200)}`,
+  );
+  const [packResult] = JSON.parse(packJson.slice(jsonStart, jsonEnd + 1));
   assert.ok(packResult, "npm pack returned no package result");
 
   const packedFiles = packResult.files.map(({ path }) => path).sort();
