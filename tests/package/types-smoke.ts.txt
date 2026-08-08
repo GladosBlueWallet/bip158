@@ -1,0 +1,24 @@
+import {
+  buildBasicFilter,
+  bytesToHex,
+  hexToBytes,
+  matchAnyBasicFilters,
+  type BuildBasicFilterOptions,
+} from "bip158";
+
+const options: BuildBasicFilterOptions = {
+  blockHashDisplay: hexToBytes(
+    "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943",
+  ),
+  elements: [hexToBytes("51")],
+};
+const filter: Uint8Array = buildBasicFilter(options);
+const matches: boolean[] = matchAnyBasicFilters(
+  [filter],
+  [options.blockHashDisplay],
+  [options.elements[0]!],
+);
+const filterHex: string = bytesToHex(filter);
+
+void matches;
+void filterHex;
