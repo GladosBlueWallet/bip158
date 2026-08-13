@@ -1,3 +1,4 @@
+import { BASIC_FILTER_M, BASIC_FILTER_P } from "../basic/params.ts";
 import { BitReader, BitWriter, FastBitReader } from "../crypto/bits.ts";
 import { concatBytes, bytesToHex } from "../crypto/bytes.ts";
 import {
@@ -7,10 +8,6 @@ import {
 } from "../crypto/siphash.ts";
 import { decodeCompactSize, encodeCompactSize } from "../wire/compact-size.ts";
 
-/** Default Golomb-Rice parameter for the BIP-158 wire format (basic filters). */
-const DEFAULT_P = 19;
-/** Default division constant `M` for the BIP-158 wire format (basic filters). */
-const DEFAULT_M = 784931n;
 const UINT32_MAX = 0xffff_ffff;
 const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
 const MAX_FILTER_DATA_BYTES = 4_000_000;
@@ -163,7 +160,6 @@ function validateFilterParameters(filter: GcsFilter): ValidatedFilterParameters 
 function validateFilterBody(
   data: Uint8Array,
   parameters: ValidatedFilterParameters,
-  onValue?: (value: bigint) => void,
 ): void {
   if (!(data instanceof Uint8Array)) {
     throw new Error("GCS data must be a Uint8Array");
@@ -196,7 +192,6 @@ function validateFilterBody(
     if (value >= F) {
       throw new Error(`GCS value ${value} is outside filter range ${F}`);
     }
-    onValue?.(value);
   }
 
   const expectedBytes = Math.ceil(reader.bitsRead / 8);
@@ -274,8 +269,8 @@ export function parseGcs(
   options?: DeserializeGcsOptions,
 ): GcsFilter {
   const { value: N, length } = decodeCompactSize(bytes, 0);
-  const P = validateP(options?.P ?? DEFAULT_P);
-  const M = normalizeM(options?.M ?? DEFAULT_M);
+  const P = validateP(options?.P ?? BASIC_FILTER_P);
+  const M = normalizeM(options?.M ?? BASIC_FILTER_M);
   validateN(N);
   const F = BigInt(N) * M;
   if (F > UINT64_MAX) {
@@ -293,8 +288,8 @@ export function deserializeGcs(
   options?: DeserializeGcsOptions,
 ): GcsFilter {
   const { value: N, length } = decodeCompactSize(bytes, 0);
-  const P = options?.P ?? DEFAULT_P;
-  const M = normalizeM(options?.M ?? DEFAULT_M);
+  const P = validateP(options?.P ?? BASIC_FILTER_P);
+  const M = normalizeM(options?.M ?? BASIC_FILTER_M);
   if (bytes.length - length > MAX_FILTER_DATA_BYTES) {
     throw new Error("GCS data exceeds the 4,000,000-byte limit");
   }
@@ -348,8 +343,7 @@ export function matchGcs(
 
 /**
  * Tests whether any of `items` is a member of the filter (fast path; no body
- * re-validation). Allocates a scratch buffer; prefer {@link matchAnyGcsFast}
- * when matching many filters against one watchlist.
+ * re-validation).
  */
 export function matchAnyGcs(
   filter: GcsFilter,
@@ -397,8 +391,6 @@ function matchSortedNumberTargets(
   targetCount: number,
 ): boolean {
   if (targetCount === 0) return false;
-  // Insertion sort / native sort of a copy for the prefix would allocate.
-  // Callers that use batch API pre-sort via sortPrefix.
   const reader = new FastBitReader(data);
   let value = 0;
   let ti = 0;
@@ -415,46 +407,10 @@ function matchSortedNumberTargets(
   return false;
 }
 
-/** Sorts `arr[0..len)` in place (numeric ascending). */
-function sortNumberPrefix(arr: number[], len: number): void {
-  if (len < 2) return;
-  if (len === arr.length) {
-    arr.sort(compareNumber);
-    return;
-  }
-  // Timsort the prefix via a typed view would still copy; use quicksort-ish.
-  quickSort(arr, 0, len - 1);
-}
-
-function quickSort(arr: number[], left: number, right: number): void {
-  while (left < right) {
-    const pivot = arr[(left + right) >> 1]!;
-    let i = left;
-    let j = right;
-    while (i <= j) {
-      while (arr[i]! < pivot) i++;
-      while (arr[j]! > pivot) j--;
-      if (i <= j) {
-        const tmp = arr[i]!;
-        arr[i] = arr[j]!;
-        arr[j] = tmp;
-        i++;
-        j--;
-      }
-    }
-    if (j - left < right - i) {
-      if (left < j) quickSort(arr, left, j);
-      left = i;
-    } else {
-      if (i < right) quickSort(arr, i, right);
-      right = j;
-    }
-  }
-}
-
 /**
  * Hot-path MatchAny for filters whose `F` fits in a safe integer.
- * Mutates `targetsScratch[0..items.length)` as hashed+sorted targets.
+ * Overwrites `targetsScratch` with hashed, sorted targets (`length` becomes
+ * `items.length`).
  */
 export function matchAnyGcsFast(
   filter: GcsFilter,
@@ -476,6 +432,7 @@ export function matchAnyGcsFast(
   for (let i = 0; i < len; i++) {
     targetsScratch[i] = hashToRangeNumberKeyed(items[i]!, Fnum, keyed);
   }
-  sortNumberPrefix(targetsScratch, len);
+  targetsScratch.length = len;
+  targetsScratch.sort(compareNumber);
   return matchSortedNumberTargets(filter.data, N, P, targetsScratch, len);
 }
